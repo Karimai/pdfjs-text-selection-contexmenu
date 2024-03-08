@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>PDF.js with text selection</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale = 1.0, maximum-scale = 1.0, user-scalable=yes">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.2.4/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.5.141/pdf.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.5.141/pdf_viewer.min.css"/>
+    <style>
+        .container {
+            display: grid;
+            grid-template-columns: 30% 5% 65%; /* Split the page into columns */
+            align-items: center;
+        }
+        #left-panel, #middle-panel {
+            position: fixed;
+            top: 30px;
+            height: 100vh;
+            overflow: auto;
+            background-color: white;
+        }
+
+        #left-panel {
+            width: 300px;
+        }
+
+        #middle-panel {
+            width: 50px;
+            left: 300px;
+        }
+
+        #pdf-contents {
+            margin-left: 350px;
+        }
+        #ctxMenu {
+            display: none;
+            position: absolute;
+            background-color: #f9f9f9;
+            border: 1px solid #ccc;
+            padding: 5px 0;
+            z-index: 700;
+        }
+
+        #ctxMenu menu {
+            padding: 5px 20px;
+            cursor: pointer;
+        }
+
+        #ctxMenu menu:hover {
+            background-color: #e2e2e2;
+        }
+    </style>
+</head>
+
+<body>
+
+<button id="upload-button">Select PDF</button>
+<input type="file" id="file-to-upload" accept="application/pdf" style="display: none"/>
+
+<div class="container">
+    <div id="left-panel">Left side!</div>
+    <div id="middle-panel">
+        <label for="From">From</label>
+        <select id="From"></select>
+        <br>
+        <label for="To"> To:</label>
+        <select id="To"></select>
+    </div>
+    <div id="pdf-contents" style="display: none;"></div>
+</div>
+<menu id="ctxMenu">
+    <menu title="From" data-action="From">From</menu>
+    <menu title="To" data-action="To">To</menu>
+</menu>
+
+<script>
+
+    let __PAGE, __SELECTED_TEXT, __ACTION, __PDF_DOC, PDFJS = window['pdfjs-dist/build/pdf'];
+
+    PDFJS.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.5.141/pdf.worker.min.js';
+
+    function createPageOptions(pageNumber) {
+        let fromSelect = document.getElementById("From");
+        let toSelect = document.getElementById("To");
+
+        function generateOptions(selectElement) {
+            for (let i = 1; i <= pageNumber; i++) {
+                let option = document.createElement("option");
+                option.value = i.toString();
+                option.text = i.toString();
+                selectElement.appendChild(option);
+            }
+        }
+
+        generateOptions(fromSelect);
+        generateOptions(toSelect);
+    }
+
+    function createCanvasAndTextLayer(pageNumber) {
+        let canvasId = "pdf-canvas-" + pageNumber;
+        let textLayerId = "text-layer-" + pageNumber;
+
+        // Create canvas element
+        let canvas = document.createElement('canvas');
+        canvas.id = canvasId;
+        canvas.width = 1000;
+        $("#pdf-contents").append(canvas);
+
+        // Create text layer div
+        let textLayer = document.createElement('div');
+        textLayer.id = textLayerId;
+        textLayer.className = "textLayer";
+
+        const ctxMenu = document.getElementById("ctxMenu");
+
+        textLayer.addEventListener("contextmenu", function (event) {
+
+            event.preventDefault();
+            let currentTextLayerId = event.target.closest('.textLayer').id;
+            let parts = currentTextLayerId.split("-");
+            __PAGE = parts[parts.length - 1];
+            console.log("Right-clicked on page: ", __PAGE);
+
+            ctxMenu.style.display = "block";
+            ctxMenu.style.left = event.pageX + "px";
+            ctxMenu.style.top = event.pageY + "px";
+
+        });
+
+        textLayer.addEventListener("click", function (event) {
+            ctxMenu.style.display = "none";
+        });
+
+        textLayer.addEventListener("mouseup", function (event) {
+            __SELECTED_TEXT = getSelectedText();
+            console.log("Selected text:", __SELECTED_TEXT);
+        });
+
+        $("#pdf-contents").append(textLayer);
+
+    }
+
+    // Add click event listeners to menu items
+    $(document).on("click", "#ctxMenu [data-action]", function () {
+        __ACTION = $(this).data("action");
+        document.getElementById(__ACTION).value = __PAGE;
+        console.log('action: ', __ACTION);
+    });
+
+    function getSelectedText() {
+        let selectedText = "";
+        if (window.getSelection) {
+            selectedText = window.getSelection().toString();
+        }
+        return selectedText;
+    }
+
+    function showPDF(pdf_url) {
+        PDFJS.getDocument({url: pdf_url}).promise.then(function (pdf_doc) {
+            __PDF_DOC = pdf_doc;
+            let PDF_PAGES = __PDF_DOC.numPages;
+            $("#pdf-contents").show();
+
+            createPageOptions(PDF_PAGES);
+
+            for (let i = 1; i <= PDF_PAGES; i++) {
+                createCanvasAndTextLayer(i);
+                showPage(i);
+            }
+        }).catch(function (error) {
+            $("#upload-button").show();
+            alert(error.message);
+        });
+    }
+
+    function showPage(page_no) {
+        let CANVAS = $('#pdf-canvas-' + page_no).get(0),
+            CANVAS_CTX = CANVAS.getContext('2d');
+
+        // Fetch the page
+        __PDF_DOC.getPage(page_no).then(function (page) {
+            // Get viewport of the page at required scale
+            let viewport = page.getViewport({
+                scale: 1,
+            });
+
+            // As the canvas is of a fixed width we need to set the scale of the viewport accordingly
+            let scale = CANVAS.width / viewport.width;
+            viewport = page.getViewport({
+                scale: scale
+            });
+
+            // Set canvas height
+            CANVAS.height = viewport.height;
+
+            var renderContext = {
+                canvasContext: CANVAS_CTX,
+                viewport: viewport
+            };
+
+            // Render the page contents in the canvas
+            page.render(renderContext).promise.then(function () {
+
+                // Return the text contents of the page after the pdf has been rendered in the canvas
+                return page.getTextContent();
+            }).then(function (textContent) {
+                // Get canvas offset
+                var canvas_offset = $("#pdf-canvas-" + page_no).offset();
+
+                // Clear HTML for text layer
+                $("#text-layer-" + page_no).html('');
+
+                // Assign the CSS created to the text-layer element
+                document.getElementById('text-layer-' + page_no).style.setProperty('--scale-factor', viewport.scale);
+                $("#text-layer-" + page_no).css({left: canvas_offset.left + 'px', top: canvas_offset.top + 'px'});
+
+                // Pass the data to the method for rendering of text over the pdf canvas.
+                PDFJS.renderTextLayer({
+                    textContentSource: textContent,
+                    container: $("#text-layer-" + page_no).get(0),
+                    viewport: viewport,
+                    textDivs: []
+                });
+            });
+        });
+    }
+
+    $("#upload-button").on('click', function () {
+        $("#file-to-upload").trigger('click');
+    });
+
+    $("#file-to-upload").on('change', function () {
+        $("#upload-button").hide();
+
+        showPDF(URL.createObjectURL($("#file-to-upload").get(0).files[0]));
+    });
+
+</script>
+</body>
+</html>
